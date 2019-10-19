@@ -17,8 +17,8 @@ class NodeTest {
             VolatileState(0, 0),
             VolatileStateOnLeader(listOf(), listOf())
         )
-        val heartbeatEventScheduler = HeartbeatEventSchedulerTimerImpl()
-        node.attachScheduler(heartbeatEventScheduler)
+        val heartbeatEventScheduler = HeartbeatEventSchedulerTimerImpl(1000)
+        heartbeatEventScheduler.attachClient(node)
         assertNotNull(node)
     }
 }

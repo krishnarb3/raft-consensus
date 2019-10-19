@@ -3,7 +3,7 @@ package com.rbkrishna.distributed.raft.api.heartbeat
 import java.util.Timer
 import java.util.TimerTask
 
-class HeartbeatEventSchedulerTimerImpl(val period: Long) : HeartbeatEventScheduler {
+class HeartbeatEventSchedulerTimerImpl(private val period: Long) : HeartbeatEventScheduler {
     private lateinit var timer: Timer
 
     private lateinit var heartbeatEventClient: HeartbeatEventClient

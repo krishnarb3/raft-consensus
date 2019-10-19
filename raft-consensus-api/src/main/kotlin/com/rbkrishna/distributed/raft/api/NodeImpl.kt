@@ -3,6 +3,7 @@ package com.rbkrishna.distributed.raft.api
 import com.rbkrishna.distributed.raft.api.heartbeat.HeartbeatEventScheduler
 import com.rbkrishna.distributed.raft.api.log.LogEntry
 import com.rbkrishna.distributed.raft.api.state.*
+import org.slf4j.LoggerFactory
 import kotlin.math.min
 
 open class NodeImpl<T>(
@@ -13,30 +14,23 @@ open class NodeImpl<T>(
 ) : Node<T> {
 
     lateinit var heartbeatEventScheduler: HeartbeatEventScheduler
+    var nodeList = mutableListOf<Node<T>>(this)
+    var receivedAppendEntriesFromLeader = false
 
     private lateinit var stateMachine: StateMachine
 
-    var nodeList = mutableListOf<Node<T>>(this)
-
-    var receivedAppendEntriesFromLeader = false
+    private val logger = LoggerFactory.getLogger(NodeImpl::class.java)
 
     @Synchronized
     override fun sendRequestVotes(requestVotesArgs: RequestVotesArgs) {
         if (nodeState == NodeState.CANDIDATE) {
             val numberOfNodes = nodeList.size
             val numberOfVotes = nodeList
-                .map { Pair(it, it.handleRequestVotes(requestVotesArgs)) }
-//                .onEach { (node, requestVotesRes) ->
-//                    if (requestVotesRes.termNumber > persistentState.currentTerm && node != this) {
-//                        persistentState = persistentState.copy(currentTerm = requestVotesRes.termNumber)
-//                        nodeState = NodeState.FOLLOWER
-//                        return@sendRequestVotes
-//                    }
-//                }
-                .filter { it.second.voteGranted }.size
+                .map { it.handleRequestVotes(requestVotesArgs) }
+                .filter { it.voteGranted }.size
 
             if (numberOfVotes > numberOfNodes.toDouble() / 2F) {
-                System.err.println("${persistentState.id} became leader")
+                logger.info("${persistentState.id} became leader")
                 nodeState = NodeState.LEADER
                 persistentState = persistentState.copy(currentTerm = persistentState.currentTerm + 1)
             } else {
@@ -49,27 +43,32 @@ open class NodeImpl<T>(
 
     @Synchronized
     override fun handleRequestVotes(requestVotesArgs: RequestVotesArgs): RequestVotesRes {
-        if (nodeState == NodeState.LEADER) {
+        if (nodeState == NodeState.LEADER
+            || requestVotesArgs.termNumber < persistentState.currentTerm) {
             return RequestVotesRes(persistentState.currentTerm, false)
         }
         if (requestVotesArgs.candidateId == persistentState.id) {
+            persistentState = persistentState.copy(votedFor = requestVotesArgs.candidateId)
             return RequestVotesRes(requestVotesArgs.termNumber, true)
         }
         if (requestVotesArgs.termNumber > persistentState.currentTerm) {
-            persistentState = persistentState.copy(currentTerm = requestVotesArgs.termNumber)
+            persistentState = persistentState.copy(
+                currentTerm = requestVotesArgs.termNumber,
+                votedFor = requestVotesArgs.candidateId
+            )
             nodeState = NodeState.FOLLOWER
-            System.err.println("${persistentState.id} voted for ${requestVotesArgs.candidateId}")
+            logger.info("${persistentState.id} voted for ${requestVotesArgs.candidateId}")
             return RequestVotesRes(requestVotesArgs.termNumber, true)
-        }
-        if (requestVotesArgs.termNumber < persistentState.currentTerm) {
-            return RequestVotesRes(persistentState.currentTerm, false)
         }
         if ((persistentState.votedFor == null || persistentState.votedFor == requestVotesArgs.candidateId)
             && logUpToDate(requestVotesArgs)
         ) {
-//            heartbeatEventScheduler.refreshHeartbeat()
-            System.err.println("${persistentState.id} voted for ${requestVotesArgs.candidateId}")
-            return RequestVotesRes(persistentState.currentTerm, true)
+            persistentState = persistentState.copy(
+                currentTerm = requestVotesArgs.termNumber,
+                votedFor = requestVotesArgs.candidateId
+            )
+            logger.info("${persistentState.id} voted for ${requestVotesArgs.candidateId}")
+            return RequestVotesRes(requestVotesArgs.termNumber, true)
         }
         return RequestVotesRes(requestVotesArgs.termNumber, false)
     }
@@ -77,7 +76,7 @@ open class NodeImpl<T>(
     @Synchronized
     override fun sendAppendEntries(appendEntriesArgs: AppendEntriesArgs<T>) {
         if (nodeState == NodeState.LEADER) {
-            System.err.println("${persistentState.id} sendAppendEntries")
+            logger.info("${persistentState.id} sendAppendEntries")
             var appendEntriesResults = listOf<AppendEntriesRes>()
             if (appendEntriesArgs.logEntries.isEmpty()) {
                 // Send heartbeat to all nodes
@@ -106,14 +105,16 @@ open class NodeImpl<T>(
                     }
                 }
             }
+            logger.info("${persistentState.id} sendAppendEntries finished")
+        } else {
+            throw Exception("sendAppendEntries called by non leader")
         }
-        System.err.println("${persistentState.id} sendAppendEntries finished")
     }
 
     @Synchronized
     override fun handleAppendEntries(appendEntriesArgs: AppendEntriesArgs<T>): AppendEntriesRes {
         if (nodeState != NodeState.LEADER) {
-            System.err.println("${persistentState.id} handleAppendEntries")
+            logger.info("${persistentState.id} handleAppendEntries")
             if (appendEntriesArgs.termNumber < persistentState.currentTerm) {
                 return AppendEntriesRes(persistentState.currentTerm, false)
             } else if (!isEntryAt(
@@ -156,7 +157,7 @@ open class NodeImpl<T>(
     }
 
     override fun handleHeartbeatEvent() {
-        System.err.println("${persistentState.id} handleHeartbeat, receivedAppendEntries: $receivedAppendEntriesFromLeader")
+        logger.info("${persistentState.id} handleHeartbeat, receivedAppendEntries: $receivedAppendEntriesFromLeader")
         if (nodeState == NodeState.LEADER) {
             val lastLogEntry = persistentState.logEntries.lastOrNull()
             sendAppendEntries(
@@ -169,9 +170,8 @@ open class NodeImpl<T>(
                     leaderCommitIndex = volatileState.commitIndex
                 )
             )
-
         } else {
-            if (!receivedAppendEntriesFromLeader) {
+            if (!receivedAppendEntriesFromLeader && persistentState.votedFor == null) {
                 receivedAppendEntriesFromLeader = false
                 startElection()
             } else {
@@ -212,10 +212,9 @@ open class NodeImpl<T>(
         if (sourceNode != this) {
             nodeList.add(sourceNode)
             volatileStateOnLeader =
-                volatileStateOnLeader.copy(volatileStateOnLeader.nextIndex + this.lastIndex(persistentState.logEntries) + 1)
-//            if (nodeState == NodeState.LEADER) {
-//                nodeList.forEach { it.handleJoinNotification(sourceNode) }
-//            }
+                volatileStateOnLeader.copy(
+                    nextIndex = volatileStateOnLeader.nextIndex + this.lastIndex(persistentState.logEntries) + 1
+                )
         }
     }
 
@@ -225,7 +224,7 @@ open class NodeImpl<T>(
     }
 
     private fun startElection() {
-        System.err.println("${persistentState.id} started election")
+        logger.info("${persistentState.id} started election")
         nodeState = NodeState.CANDIDATE
         sendRequestVotes(
             RequestVotesArgs(
@@ -235,11 +234,6 @@ open class NodeImpl<T>(
                 persistentState.logEntries.lastOrNull()?.termNumber ?: 0
             )
         )
-    }
-
-    fun attachScheduler(heartbeatEventScheduler: HeartbeatEventScheduler) {
-        this.heartbeatEventScheduler = heartbeatEventScheduler
-        this.heartbeatEventScheduler.scheduleHeartbeat()
     }
 
     private fun sendAppendEntriesStartingAtNextIndex(
@@ -308,11 +302,19 @@ open class NodeImpl<T>(
         return false
     }
 
-    private fun lastIndex(logEntries: List<LogEntry<T>>) = logEntries.lastIndex
+    private fun lastIndex(logEntries: List<LogEntry<T>>) = if (logEntries.isNotEmpty()) {
+        logEntries.lastIndex
+    } else {
+        0
+    }
 
     private fun <U> List<U>.isQuorum(predicate: (U) -> Boolean): Boolean =
         this.filter(predicate).count() > this.size / 2
 
-    override fun toString() = "persistentState: $persistentState, nodeState: $nodeState" +
-            ", volatileState: $volatileState, volatileStateOnLeader: $volatileStateOnLeader"
+    override fun toString(): String {
+        return "persistentState: $persistentState" +
+                ", nodeState: $nodeState" +
+                ", volatileState: $volatileState" +
+                ", volatileStateOnLeader: $volatileStateOnLeader"
+    }
 }

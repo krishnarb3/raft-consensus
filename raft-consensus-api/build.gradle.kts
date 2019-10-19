@@ -13,7 +13,8 @@ repositories {
 
 dependencies {
     compile(kotlin("stdlib-jdk8"))
-    testCompile(group = "org.jetbrains.kotlin", name = "kotlin-test", version = "1.3.20")
+    compile("ch.qos.logback:logback-classic:1.2.3")
+    testCompile(group = "org.jetbrains.kotlin", name = "kotlin-test", version = "1.3.50")
     testCompile(group = "org.junit.jupiter", name = "junit-jupiter", version = "5.4.0")
 }
 
