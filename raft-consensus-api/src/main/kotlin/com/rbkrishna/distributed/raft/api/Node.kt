@@ -11,6 +11,6 @@ interface Node<T> : HeartbeatEventClient {
 
     fun onCommandReceived(command: Command<T>)
 
-    fun handleJoinNotification(sourceNode: Node<T>)
-    fun handleQuitNotification(sourceNode: Node<T>)
+    fun handleJoinNotification(sourceNodeId: Int)
+    fun handleQuitNotification(sourceNodeId: Int)
 }

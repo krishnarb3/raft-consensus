@@ -6,7 +6,7 @@ import com.rbkrishna.distributed.raft.api.state.*
 import org.slf4j.LoggerFactory
 import kotlin.math.min
 
-open class NodeImpl<T>(
+abstract class BaseNode<T>(
     var persistentState: PersistentState<T>,
     var nodeState: NodeState,
     var volatileState: VolatileState,
@@ -14,19 +14,19 @@ open class NodeImpl<T>(
 ) : Node<T> {
 
     lateinit var heartbeatEventScheduler: HeartbeatEventScheduler
-    var nodeList = mutableListOf<Node<T>>(this)
+    var nodeIds = mutableSetOf<Int>(persistentState.id)
     var receivedAppendEntriesFromLeader = false
 
     private lateinit var stateMachine: StateMachine
 
-    private val logger = LoggerFactory.getLogger(NodeImpl::class.java)
+    private val logger = LoggerFactory.getLogger(BaseNode::class.java)
 
     @Synchronized
     override fun sendRequestVotes(requestVotesArgs: RequestVotesArgs) {
         if (nodeState == NodeState.CANDIDATE) {
-            val numberOfNodes = nodeList.size
-            val numberOfVotes = nodeList
-                .map { it.handleRequestVotes(requestVotesArgs) }
+            val numberOfNodes = nodeIds.size
+            val numberOfVotes = nodeIds
+                .map { sendHandleRequestVotes(it, requestVotesArgs) }
                 .filter { it.voteGranted }.size
 
             if (numberOfVotes > numberOfNodes.toDouble() / 2F) {
@@ -80,11 +80,11 @@ open class NodeImpl<T>(
             var appendEntriesResults = listOf<AppendEntriesRes>()
             if (appendEntriesArgs.logEntries.isEmpty()) {
                 // Send heartbeat to all nodes
-                nodeList.filter { it != this }.forEach { node ->
-                    appendEntriesResults = appendEntriesResults + node.handleAppendEntries(appendEntriesArgs)
+                nodeIds.filter { it != persistentState.id }.forEach { nodeId ->
+                    appendEntriesResults = appendEntriesResults + sendHandleAppendEntries(nodeId, appendEntriesArgs)
                 }
             } else {
-                nodeList.filter { it != this }.forEachIndexed { index, node ->
+                nodeIds.filter { it != persistentState.id }.forEachIndexed { index, node ->
                     val appendEntriesRes = sendAppendEntriesStartingAtNextIndex(
                         appendEntriesArgs,
                         volatileStateOnLeader.nextIndex[index],
@@ -208,9 +208,9 @@ open class NodeImpl<T>(
     }
 
     @Synchronized
-    override fun handleJoinNotification(sourceNode: Node<T>) {
-        if (sourceNode != this) {
-            nodeList.add(sourceNode)
+    override fun handleJoinNotification(sourceNodeId: Int) {
+        if (sourceNodeId != persistentState.id) {
+            nodeIds.add(sourceNodeId)
             volatileStateOnLeader =
                 volatileStateOnLeader.copy(
                     nextIndex = volatileStateOnLeader.nextIndex + this.lastIndex(persistentState.logEntries) + 1
@@ -219,9 +219,15 @@ open class NodeImpl<T>(
     }
 
     @Synchronized
-    override fun handleQuitNotification(sourceNode: Node<T>) {
-        nodeList.remove(sourceNode)
+    override fun handleQuitNotification(sourceNodeId: Int) {
+        nodeIds.remove(sourceNodeId)
     }
+
+    abstract fun sendHandleRequestVotes(nodeId: Int, requestVotesArgs: RequestVotesArgs): RequestVotesRes
+
+    abstract fun sendHandleAppendEntries(nodeId: Int, appendEntriesArgs: AppendEntriesArgs<T>): AppendEntriesRes
+
+    abstract fun sendJoinNotification(sourceNodeId: Int)
 
     private fun startElection() {
         logger.info("${persistentState.id} started election")
@@ -240,13 +246,13 @@ open class NodeImpl<T>(
         appendEntriesArgs: AppendEntriesArgs<T>,
         nextIndex: Int,
         nodeIndex: Int,
-        node: Node<T>
+        nodeId: Int
     ): AppendEntriesRes {
         if (nextIndex >= 0) {
             val newAppendEntriesArgs = appendEntriesArgs.copy(
                 logEntries = appendEntriesArgs.logEntries.subList(nextIndex, appendEntriesArgs.logEntries.size)
             )
-            val appendEntriesRes = node.handleAppendEntries(newAppendEntriesArgs)
+            val appendEntriesRes = sendHandleAppendEntries(nodeId, newAppendEntriesArgs)
             return if (appendEntriesRes.result) {
                 val newNextIndex = volatileStateOnLeader.nextIndex.mapIndexed { index, value ->
                     if (index == nodeIndex) nextIndex
@@ -259,7 +265,7 @@ open class NodeImpl<T>(
                 volatileStateOnLeader = VolatileStateOnLeader(newNextIndex, matchIndex)
                 appendEntriesRes
             } else {
-                sendAppendEntriesStartingAtNextIndex(appendEntriesArgs, nextIndex - 1, nodeIndex, node)
+                sendAppendEntriesStartingAtNextIndex(appendEntriesArgs, nextIndex - 1, nodeIndex, nodeId)
             }
         } else {
             throw Exception("nextIndex passed to sendAppendEntries < 0")

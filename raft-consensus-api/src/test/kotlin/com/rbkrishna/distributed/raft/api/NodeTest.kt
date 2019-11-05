@@ -11,7 +11,7 @@ import kotlin.test.assertNotNull
 class NodeTest {
     @Test
     fun testNode() {
-        val node = NodeImpl<String>(
+        val node = BaseNode<String>(
             PersistentState(1, 0, 0, listOf()),
             NodeState.FOLLOWER,
             VolatileState(0, 0),

@@ -22,9 +22,11 @@ class RaftClusterManager {
         val newNode = RaftNodeImpl(
             PersistentState(nodeId),
             NodeState.FOLLOWER,
-            VolatileState()
+            VolatileState(),
+            raftCluster = raftCluster
         ).apply {
-            this.nodeList.addAll(nodes)
+            val nodeIds = nodes.map { it.persistentState.id }
+            this.nodeIds.addAll(nodeIds)
             val hbScheduler = HeartbeatEventSchedulerTimerImpl(
                 if (nodeId == 1) 500L
                 else 1500L
@@ -35,7 +37,7 @@ class RaftClusterManager {
             nodeToSchedulerMap[this.persistentState.id] = hbScheduler
         }
         nodeMap.putIfAbsent(nodeId, newNode)
-        nodes.filter { it != newNode }.forEach { node -> node.handleJoinNotification(newNode) }
+        nodes.filter { it != newNode }.forEach { node -> node.handleJoinNotification(nodeId) }
         return "SUCCESS"
     }
 
@@ -46,7 +48,7 @@ class RaftClusterManager {
         nodeMap.remove(nodeId)
         nodeToSchedulerMap[nodeId]?.cancel()
         quitNode?.let {
-            nodeMap.values.forEach { node -> node.handleQuitNotification(quitNode) }
+            nodeMap.values.forEach { node -> node.handleQuitNotification(nodeId) }
         }
         return "SUCCESS"
     }
