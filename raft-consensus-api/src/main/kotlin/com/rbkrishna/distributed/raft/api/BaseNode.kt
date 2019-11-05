@@ -80,16 +80,16 @@ abstract class BaseNode<T>(
             var appendEntriesResults = listOf<AppendEntriesRes>()
             if (appendEntriesArgs.logEntries.isEmpty()) {
                 // Send heartbeat to all nodes
-                nodeIds.filter { it != persistentState.id }.forEach { nodeId ->
+                nodeIds.filter { persistentState.id != it }.forEach { nodeId ->
                     appendEntriesResults = appendEntriesResults + sendHandleAppendEntries(nodeId, appendEntriesArgs)
                 }
             } else {
-                nodeIds.filter { it != persistentState.id }.forEachIndexed { index, node ->
+                nodeIds.filter { persistentState.id != it }.forEachIndexed { index, nodeId ->
                     val appendEntriesRes = sendAppendEntriesStartingAtNextIndex(
                         appendEntriesArgs,
                         volatileStateOnLeader.nextIndex[index],
                         index,
-                        node
+                        nodeId
                     )
                     if (appendEntriesRes.termNumber > persistentState.currentTerm) {
                         persistentState = persistentState.copy(currentTerm = appendEntriesRes.termNumber)

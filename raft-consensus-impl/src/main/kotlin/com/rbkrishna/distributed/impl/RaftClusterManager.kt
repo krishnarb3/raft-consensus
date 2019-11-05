@@ -36,8 +36,8 @@ class RaftClusterManager {
             hbScheduler.scheduleHeartbeat()
             nodeToSchedulerMap[this.persistentState.id] = hbScheduler
         }
+        newNode.sendJoinNotification(nodeId)
         nodeMap.putIfAbsent(nodeId, newNode)
-        nodes.filter { it != newNode }.forEach { node -> node.handleJoinNotification(nodeId) }
         return "SUCCESS"
     }
 
