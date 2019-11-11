@@ -13,7 +13,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.*
 import kotlinx.serialization.json.*
 import org.slf4j.LoggerFactory
-import java.util.concurrent.CountDownLatch
 
 class RaftNodeVertxImpl(
     persistentState: PersistentState<String>,
@@ -61,18 +60,6 @@ class RaftNodeVertxImpl(
             logger.info("Node ${persistentState.id} Received quit notification from $sourceNodeId")
             nodeIds.remove(sourceNodeId)
         }
-    }
-
-    override fun acquireLeaderLock() : Boolean {
-        val sharedData = vertx.sharedData()
-        val latch = CountDownLatch(1)
-        var res = false
-        sharedData.getLockWithTimeout("leader_lock", 2000) { result ->
-            res = result.succeeded()
-            latch.countDown()
-        }
-        latch.await()
-        return res
     }
 
     override fun sendHandleRequestVotes(nodeId: Int, requestVotesArgs: RequestVotesArgs): RequestVotesRes {

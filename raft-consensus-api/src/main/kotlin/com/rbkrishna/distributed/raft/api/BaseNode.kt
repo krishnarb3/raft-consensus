@@ -30,13 +30,9 @@ abstract class BaseNode<T>(
                 .filter { it.voteGranted }.size
 
             if (numberOfVotes > numberOfNodes.toDouble() / 2F) {
-                if (acquireLeaderLock()) {
-                    nodeState = NodeState.LEADER
-                    persistentState = persistentState.copy(currentTerm = persistentState.currentTerm + 1)
-                    logger.info("${persistentState.id} became leader")
-                } else {
-                    nodeState = NodeState.FOLLOWER
-                }
+                nodeState = NodeState.LEADER
+                persistentState = persistentState.copy(currentTerm = persistentState.currentTerm + 1)
+                logger.info("${persistentState.id} became leader")
             } else {
                 nodeState = NodeState.FOLLOWER
             }
@@ -225,8 +221,6 @@ abstract class BaseNode<T>(
     override fun handleQuitNotification(sourceNodeId: Int) {
         nodeIds.remove(sourceNodeId)
     }
-
-    open fun acquireLeaderLock() = true
 
     abstract fun sendHandleRequestVotes(nodeId: Int, requestVotesArgs: RequestVotesArgs): RequestVotesRes
 
