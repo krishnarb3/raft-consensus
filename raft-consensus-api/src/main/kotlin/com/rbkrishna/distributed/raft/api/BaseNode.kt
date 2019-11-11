@@ -30,9 +30,13 @@ abstract class BaseNode<T>(
                 .filter { it.voteGranted }.size
 
             if (numberOfVotes > numberOfNodes.toDouble() / 2F) {
-                logger.info("${persistentState.id} became leader")
-                nodeState = NodeState.LEADER
-                persistentState = persistentState.copy(currentTerm = persistentState.currentTerm + 1)
+                if (acquireLeaderLock()) {
+                    nodeState = NodeState.LEADER
+                    persistentState = persistentState.copy(currentTerm = persistentState.currentTerm + 1)
+                    logger.info("${persistentState.id} became leader")
+                } else {
+                    nodeState = NodeState.FOLLOWER
+                }
             } else {
                 nodeState = NodeState.FOLLOWER
             }
@@ -44,7 +48,8 @@ abstract class BaseNode<T>(
     @Synchronized
     override fun handleRequestVotes(requestVotesArgs: RequestVotesArgs): RequestVotesRes {
         if (nodeState == NodeState.LEADER
-            || requestVotesArgs.termNumber < persistentState.currentTerm) {
+            || requestVotesArgs.termNumber < persistentState.currentTerm
+        ) {
             return RequestVotesRes(persistentState.currentTerm, false)
         }
         if (requestVotesArgs.candidateId == persistentState.id) {
@@ -106,54 +111,49 @@ abstract class BaseNode<T>(
                 }
             }
             logger.info("${persistentState.id} sendAppendEntries finished")
-        } else {
-            throw Exception("sendAppendEntries called by non leader")
         }
     }
 
     @Synchronized
     override fun handleAppendEntries(appendEntriesArgs: AppendEntriesArgs<T>): AppendEntriesRes {
-        if (nodeState != NodeState.LEADER) {
-            logger.info("${persistentState.id} handleAppendEntries")
-            if (appendEntriesArgs.termNumber < persistentState.currentTerm) {
-                return AppendEntriesRes(persistentState.currentTerm, false)
-            } else if (!isEntryAt(
-                    persistentState.logEntries,
-                    appendEntriesArgs.prevLogIndex,
-                    appendEntriesArgs.prevLogTerm
-                )
-            ) {
-                return AppendEntriesRes(appendEntriesArgs.termNumber, false)
-            } else {
-                val resultLogs = appendNewEntries(appendEntriesArgs.logEntries)
-                if (appendEntriesArgs.leaderCommitIndex > volatileState.commitIndex) {
-                    volatileState = if (appendEntriesArgs.leaderCommitIndex > volatileState.lastApplied) {
-                        VolatileState(
-                            commitIndex = min(appendEntriesArgs.leaderCommitIndex, resultLogs.last().index),
-                            lastApplied = volatileState.lastApplied + 1
-                        ).also {
-                            stateMachine.apply(
-                                Command(
-                                    appendEntriesArgs.termNumber,
-                                    appendEntriesArgs.logEntries[volatileState.lastApplied].command
-                                )
+        logger.info("${persistentState.id} handleAppendEntries")
+        if (appendEntriesArgs.termNumber < persistentState.currentTerm) {
+            return AppendEntriesRes(persistentState.currentTerm, false)
+        } else if (!isEntryAt(
+                persistentState.logEntries,
+                appendEntriesArgs.prevLogIndex,
+                appendEntriesArgs.prevLogTerm
+            )
+        ) {
+            return AppendEntriesRes(appendEntriesArgs.termNumber, false)
+        } else {
+            val resultLogs = appendNewEntries(appendEntriesArgs.logEntries)
+            if (appendEntriesArgs.leaderCommitIndex > volatileState.commitIndex) {
+                volatileState = if (appendEntriesArgs.leaderCommitIndex > volatileState.lastApplied) {
+                    VolatileState(
+                        commitIndex = min(appendEntriesArgs.leaderCommitIndex, resultLogs.last().index),
+                        lastApplied = volatileState.lastApplied + 1
+                    ).also {
+                        stateMachine.apply(
+                            Command(
+                                appendEntriesArgs.termNumber,
+                                appendEntriesArgs.logEntries[volatileState.lastApplied].command
                             )
-                        }
-                    } else {
-                        VolatileState(
-                            commitIndex = min(appendEntriesArgs.leaderCommitIndex, resultLogs.last().index),
-                            lastApplied = volatileState.lastApplied
                         )
                     }
+                } else {
+                    VolatileState(
+                        commitIndex = min(appendEntriesArgs.leaderCommitIndex, resultLogs.last().index),
+                        lastApplied = volatileState.lastApplied
+                    )
                 }
             }
-            receivedAppendEntriesFromLeader = true
-            heartbeatEventScheduler.refreshHeartbeat()
-            persistentState = persistentState.copy(currentTerm = appendEntriesArgs.termNumber)
-            return AppendEntriesRes(persistentState.currentTerm, true)
-        } else {
-            throw WrongStateException("Leader received handleAppendEntries")
         }
+        nodeState = NodeState.FOLLOWER
+        receivedAppendEntriesFromLeader = true
+        heartbeatEventScheduler.refreshHeartbeat()
+        persistentState = persistentState.copy(currentTerm = appendEntriesArgs.termNumber)
+        return AppendEntriesRes(persistentState.currentTerm, true)
     }
 
     override fun handleHeartbeatEvent() {
@@ -172,10 +172,13 @@ abstract class BaseNode<T>(
             )
         } else {
             if (!receivedAppendEntriesFromLeader && persistentState.votedFor == null) {
+                logger.info("Going to start election")
                 receivedAppendEntriesFromLeader = false
                 startElection()
             } else {
+                logger.info("Not starting election")
                 receivedAppendEntriesFromLeader = false
+                persistentState = persistentState.copy(votedFor = null)
             }
         }
     }
@@ -223,11 +226,15 @@ abstract class BaseNode<T>(
         nodeIds.remove(sourceNodeId)
     }
 
+    open fun acquireLeaderLock() = true
+
     abstract fun sendHandleRequestVotes(nodeId: Int, requestVotesArgs: RequestVotesArgs): RequestVotesRes
 
     abstract fun sendHandleAppendEntries(nodeId: Int, appendEntriesArgs: AppendEntriesArgs<T>): AppendEntriesRes
 
     abstract fun sendJoinNotification(sourceNodeId: Int)
+
+    abstract fun sendQuitNotification(sourceNodeId: Int)
 
     private fun startElection() {
         logger.info("${persistentState.id} started election")

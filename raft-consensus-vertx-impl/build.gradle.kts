@@ -16,17 +16,17 @@ repositories {
     jcenter()
 }
 
-val mainVerticle = "com.rbkrishna.distributed.NodeService"
+val mainVerticle = "com.rbkrishna.distributed.RaftVerticle"
 val mainClassName = "io.vertx.core.Launcher"
 
 dependencies {
     implementation(kotlin("stdlib-jdk8"))
     compile(project(":raft-consensus-api"))
 
-    implementation(group = "io.vertx", name = "vertx-core", version = "3.7.1")
-    implementation(group = "io.vertx", name = "vertx-ignite", version = "3.7.1")
-    implementation(group = "io.vertx", name = "vertx-lang-kotlin", version = "3.7.1")
-    implementation(group = "io.vertx", name = "vertx-lang-kotlin-coroutines", version = "3.7.1")
+    implementation(group = "io.vertx", name = "vertx-core", version = "3.8.3")
+    implementation(group = "io.vertx", name = "vertx-ignite", version = "3.8.3")
+    implementation(group = "io.vertx", name = "vertx-lang-kotlin", version = "3.8.3")
+    implementation(group = "io.vertx", name = "vertx-lang-kotlin-coroutines", version = "3.8.3")
 
     testCompile(group = "org.jetbrains.kotlin", name = "kotlin-test", version = "1.3.40")
     testCompile(group = "org.junit.jupiter", name = "junit-jupiter", version = "5.4.0")

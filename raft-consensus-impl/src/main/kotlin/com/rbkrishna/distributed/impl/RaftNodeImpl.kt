@@ -28,4 +28,9 @@ class RaftNodeImpl(
         val nodes = raftCluster.nodeMap.values
         nodes.forEach { node -> node.handleJoinNotification(sourceNodeId) }
     }
+
+    override fun sendQuitNotification(sourceNodeId: Int) {
+        val nodes = raftCluster.nodeMap.values
+        nodes.forEach { node -> node.handleQuitNotification(sourceNodeId) }
+    }
 }

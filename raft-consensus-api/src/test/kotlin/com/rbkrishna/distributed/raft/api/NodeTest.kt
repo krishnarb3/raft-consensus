@@ -11,14 +11,6 @@ import kotlin.test.assertNotNull
 class NodeTest {
     @Test
     fun testNode() {
-        val node = BaseNode<String>(
-            PersistentState(1, 0, 0, listOf()),
-            NodeState.FOLLOWER,
-            VolatileState(0, 0),
-            VolatileStateOnLeader(listOf(), listOf())
-        )
-        val heartbeatEventScheduler = HeartbeatEventSchedulerTimerImpl(1000)
-        heartbeatEventScheduler.attachClient(node)
-        assertNotNull(node)
+
     }
 }

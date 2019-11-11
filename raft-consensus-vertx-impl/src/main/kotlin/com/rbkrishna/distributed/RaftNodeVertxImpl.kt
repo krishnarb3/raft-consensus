@@ -9,9 +9,11 @@ import io.vertx.core.Vertx
 import io.vertx.core.eventbus.Message
 import io.vertx.kotlin.coroutines.awaitResult
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.*
 import kotlinx.serialization.json.*
-
+import org.slf4j.LoggerFactory
+import java.util.concurrent.CountDownLatch
 
 class RaftNodeVertxImpl(
     persistentState: PersistentState<String>,
@@ -23,9 +25,11 @@ class RaftNodeVertxImpl(
 
     val json = Json(JsonConfiguration.Stable)
 
+    private val logger = LoggerFactory.getLogger(RaftNodeVertxImpl::class.java)
+
     init {
         val requestVotesConsumer =
-            vertx.eventBus().localConsumer<String>("${RaftAddress.REQUEST_VOTES.name}.${persistentState.id}")
+            vertx.eventBus().consumer<String>("${RaftAddress.REQUEST_VOTES.name}.${persistentState.id}")
         requestVotesConsumer.handler { message ->
             val requestVotesArgs = json.parse(RequestVotesArgs.serializer(), message.body())
             val requestVotesRes = this.handleRequestVotes(requestVotesArgs)
@@ -33,7 +37,7 @@ class RaftNodeVertxImpl(
         }
 
         val appendEntriesConsumer = vertx.eventBus()
-            .localConsumer<String>("${RaftAddress.APPEND_ENTRIES.name}.${persistentState.id}")
+            .consumer<String>("${RaftAddress.APPEND_ENTRIES.name}.${persistentState.id}")
         appendEntriesConsumer.handler { message ->
             val appendEntriesArg = json.parse(AppendEntriesArgs.serializer(String.serializer()), message.body())
             val appendEntriesRes = this.handleAppendEntries(appendEntriesArg)
@@ -41,11 +45,34 @@ class RaftNodeVertxImpl(
         }
 
         val joinNotificationConsumer =
-            vertx.eventBus().localConsumer<Int>(RaftAddress.JOIN_NOTIFICATION.name)
+            vertx.eventBus().consumer<Int>(RaftAddress.JOIN_NOTIFICATION.name)
         joinNotificationConsumer.handler { message ->
             val sourceNodeId = message.body()
+            logger.info("Node ${persistentState.id} Received join notification from $sourceNodeId")
             nodeIds.add(sourceNodeId)
+            val nodeIdsAsString = nodeIds.joinToString(",")
+            message.reply(nodeIdsAsString)
         }
+
+        val quitNotificationConsumer =
+            vertx.eventBus().consumer<Int>(RaftAddress.QUIT_NOTIFICATION.name)
+        quitNotificationConsumer.handler { message ->
+            val sourceNodeId = message.body()
+            logger.info("Node ${persistentState.id} Received quit notification from $sourceNodeId")
+            nodeIds.remove(sourceNodeId)
+        }
+    }
+
+    override fun acquireLeaderLock() : Boolean {
+        val sharedData = vertx.sharedData()
+        val latch = CountDownLatch(1)
+        var res = false
+        sharedData.getLockWithTimeout("leader_lock", 2000) { result ->
+            res = result.succeeded()
+            latch.countDown()
+        }
+        latch.await()
+        return res
     }
 
     override fun sendHandleRequestVotes(nodeId: Int, requestVotesArgs: RequestVotesArgs): RequestVotesRes {
@@ -66,16 +93,30 @@ class RaftNodeVertxImpl(
         }
     }
 
+    override fun sendQuitNotification(sourceNodeId: Int) {
+        return runBlocking {
+            sendQuitNotificationAsync(vertx, sourceNodeId)
+        }
+    }
+
     private suspend fun sendHandleRequestVotesAsync(
         vertx: Vertx,
         nodeId: Int,
         requestVotesArgs: RequestVotesArgs
     ): RequestVotesRes {
-        val message = awaitResult<Message<String>> {
-            vertx.eventBus().send("${RaftAddress.REQUEST_VOTES.name}.$nodeId", requestVotesArgs)
+        val message = withTimeoutOrNull(2000) {
+            awaitResult<Message<String>> {
+                vertx.eventBus().send(
+                    "${RaftAddress.REQUEST_VOTES.name}.$nodeId",
+                    json.stringify(RequestVotesArgs.serializer(), requestVotesArgs)
+                )
+            }
         }
-        val requestVotesRes = json.parse(RequestVotesRes.serializer(), message.body())
-        return requestVotesRes
+        return if (message != null) {
+            json.parse(RequestVotesRes.serializer(), message.body())
+        } else {
+            RequestVotesRes(requestVotesArgs.termNumber, true)
+        }
     }
 
     private suspend fun sendHandleAppendEntriesAsync(
@@ -83,14 +124,34 @@ class RaftNodeVertxImpl(
         nodeId: Int,
         appendEntriesArgs: AppendEntriesArgs<String>
     ): AppendEntriesRes {
-        val message = awaitResult<Message<String>> {
-            vertx.eventBus().send("${RaftAddress.APPEND_ENTRIES.name}.$nodeId", appendEntriesArgs)
+        val message = withTimeoutOrNull(2000) {
+            awaitResult<Message<String>> {
+                vertx.eventBus().send(
+                    "${RaftAddress.APPEND_ENTRIES.name}.$nodeId",
+                    json.stringify(AppendEntriesArgs.serializer(String.serializer()), appendEntriesArgs)
+                )
+            }
         }
-        val appendEntriesRes = json.parse(AppendEntriesRes.serializer(), message.body())
-        return appendEntriesRes
+        return if (message != null) {
+            json.parse(AppendEntriesRes.serializer(), message.body())
+        } else {
+            AppendEntriesRes(appendEntriesArgs.termNumber, false)
+        }
     }
 
     private suspend fun sendJoinNotificationAsync(vertx: Vertx, sourceNodeId: Int) {
-        vertx.eventBus().send(RaftAddress.JOIN_NOTIFICATION.name, sourceNodeId)
+        val message = withTimeoutOrNull(2000) {
+            awaitResult<Message<String>> {
+                vertx.eventBus().publish(RaftAddress.JOIN_NOTIFICATION.name, sourceNodeId)
+            }
+        }
+        if (message != null) {
+            val nodeIds = message.body().split(",").map { it.toInt() }
+            this.nodeIds.addAll(nodeIds)
+        }
+    }
+
+    private fun sendQuitNotificationAsync(vertx: Vertx, sourceNodeId: Int) {
+        vertx.eventBus().publish(RaftAddress.QUIT_NOTIFICATION.name, sourceNodeId)
     }
 }
