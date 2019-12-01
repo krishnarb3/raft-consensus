@@ -19,9 +19,9 @@ cd raft-consensus-impl
 ```
 
 ## Raft vertx implementation
-Implementation of the raft consensus api using vert.x
-Each verticle can be spawned as a raft node
-Cluster management is handled by vert.x
+Implementation of the raft consensus api using vert.x <br />
+Each verticle can be spawned as a raft node <br />
+Cluster management is handled by vert.x <br />
 
 ### Checkout
 ```bash
@@ -41,5 +41,5 @@ java -jar build/libs/raft-consensus-vertx-impl-1.0-SNAPSHOT-fat.jar -cluster -Dh
 java -jar build/libs/raft-consensus-vertx-impl-1.0-SNAPSHOT-fat.jar -cluster -Dhttp_port=8082
 ```
 
-This creates 3 verticles which communicate using the vert.x eventbus.
+This creates 3 verticles which communicate using the vert.x eventbus. <br />
 HTTP services are exposed for convenience.
